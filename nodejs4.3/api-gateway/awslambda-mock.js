@@ -38,7 +38,7 @@ process.env.AWS_DEFAULT_REGION = REGION
 var baseContext = {
   initInvokeId: uuid(),
   suppressInit: true,
-  handler: process.env.HANDLER,
+  handler: process.env.HANDLER || "index.handler",
   credentials: {
     key: ACCESS_KEY_ID,
     secret: SECRET_ACCESS_KEY,
@@ -60,13 +60,11 @@ function respondWithStatus(invokeId, status, content, headers) {
   delete responses[invokeId];
 }
 
-var invokeFn = null;
+var queue = []
 function createServer() {
   function handleRequest(request, response) {
     var invokeId = uuid()
     var parsedUrl = require('url').parse(request.url, true)
-
-    startTimes[invokeId] = process.hrtime()
 
     var body = []
     request.on('data', function(chunk) {
@@ -90,8 +88,8 @@ function createServer() {
 
       responses[invokeId] = response
 
-      systemLog('START RequestId: ' + context.invokeid + ' Version: ' + VERSION)
-      invokeFn(context)
+      queue.push(context)
+      dequeueAndRunIfFree()
     })
   }
 
@@ -101,11 +99,33 @@ function createServer() {
   server.listen(PORT, function(){
     console.log("Server listening on: http://localhost:%s", PORT)
   })
+
+  process.on('SIGINT', function() {
+    console.log("Caught interrupt signal");
+    process.exit();
+  });
+}
+
+function dequeueAndRunIfFree() {
+  if (!invokeFn) return;
+
+  var context = queue.shift();
+  if (!context) return;
+
+  startTimes[context.invokeid] = process.hrtime()
+  systemLog('START RequestId: ' + context.invokeid + ' Version: ' + VERSION)
+
+  invokeFn(context)
+  invokeFn = null
 }
 
 module.exports = {
   initRuntime: function() { createServer(); return baseContext; },
-  waitForInvoke: function(fn) { invokeFn = fn; },
+  waitForInvoke: function(fn) {
+    invokeFn = fn;
+
+    dequeueAndRunIfFree()
+  },
   reportRunning: function(invokeId) {}, // eslint-disable-line no-unused-vars
   reportDone: function(invokeId, errType, resultStr) {
     if (invokeId === baseContext.initInvokeId) { return }
