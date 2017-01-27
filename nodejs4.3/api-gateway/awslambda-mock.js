@@ -86,6 +86,13 @@ function createServer() {
         }),
       }, baseContext)
 
+      if (process.env.QUEUE_LIMIT && queue.length > process.env.QUEUE_LIMIT) {
+        response.writeHeader(502, {});
+        response.end("");
+
+        return;
+      }
+
       responses[invokeId] = response
 
       queue.push(context)
